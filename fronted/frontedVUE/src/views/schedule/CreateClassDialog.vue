@@ -181,8 +181,9 @@ watch(() => props.modelValue, (v) => {
 
   // —— 应用预填（如果传入）——
   if (props.preset) {
-    if (props.preset.course_mode) form.course_mode = props.preset.course_mode
-    if (props.preset.grade) form.grade = props.preset.grade
+     if (props.preset.teacher_main_id) {
+    form.teacher_main_id = props.preset.teacher_main_id
+     }
     // 若带了日期/时间/时长，则切到自定义模式并套用
     const d  = props.preset.date || ''
     const st = props.preset.start_time || '18:00:00'
