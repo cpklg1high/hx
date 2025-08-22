@@ -1,0 +1,100 @@
+/* 全局基础：高度撑满、字体、背景、滚动条、Element Plus 微调 */
+:root {
+  --app-bg: #f5f7fa;
+  --app-header-bg: #f5f5f5;
+  --app-header-shadow: 0 1px 4px rgba(0, 21, 41, .08);
+  --app-aside-bg: #2d3a4b;
+  --app-aside-active: #ffd04b;
+  --app-text: #303133;
+  --app-subtext: #909399;
+  --app-card-radius: 8px;
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  color: var(--app-text);
+  background: var(--app-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Element Plus 全局微调 */
+.el-card {
+  border-radius: var(--app-card-radius);
+}
+.el-breadcrumb {
+  line-height: 1;
+}
+
+/* 登录页通用容器（给 Login.vue 用） */
+.login-page {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  background: var(--app-bg);
+}
+.login-card {
+  width: 360px;
+  padding: 8px;
+}
+.login-title {
+  text-align: center;
+  margin: 8px 0 16px;
+  color: #606266;
+}
+
+/* 后台整体布局（给 AppLayout.vue 用） */
+.app-wrapper,
+.app-wrapper .el-container {
+  height: 100%;
+}
+
+.app-aside {
+  background: var(--app-aside-bg);
+  color: #fff;
+}
+
+.app-header {
+  background: var(--app-header-bg);
+  box-shadow: var(--app-header-shadow);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+
+.app-main {
+  padding: 12px;
+  background: var(--app-bg);
+}
+
+/* Sidebar 菜单（深色） */
+.app-menu {
+  border-right: none !important;
+  background: var(--app-aside-bg) !important;
+}
+.app-menu .el-menu-item,
+.app-menu .el-sub-menu__title {
+  color: #fff !important;
+}
+.app-menu .el-menu-item.is-active {
+  color: var(--app-aside-active) !important;
+}
+.app-menu .el-menu-item:hover,
+.app-menu .el-sub-menu__title:hover {
+  background: rgba(255, 255, 255, .06) !important;
+}
+
+/* Header 右侧区 */
+.header-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 面包屑容器 */
+.bc-wrap {
+  padding: 8px 0 16px;
+}
