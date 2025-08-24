@@ -30,3 +30,4 @@ export function getReferralRewardByStudent(studentId) {
 export function searchSchools(keyword) {
   return api.get('schools', { params: { keyword } })
 }
+

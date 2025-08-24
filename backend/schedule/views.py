@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 from typing import List, Dict
+from collections import defaultdict
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -127,6 +128,105 @@ class TeacherList(APIView):
         return ok([{'id': u.id, 'name': getattr(u, 'name', None) or u.username} for u in qs])
 
 
+class LessonsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        s = LessonsQuery(data=request.query_params)
+        s.is_valid(raise_exception=True)
+        v = s.validated_data
+
+        qs = (
+            Lesson.objects
+            .filter(
+                class_group__term_id=v['term_id'],
+                date__gte=v['date_from'],
+                date__lte=v['date_to']
+            )
+            .exclude(status='canceled')
+            .select_related('class_group', 'class_group__subject', 'teacher', 'room')
+            .order_by('date', 'start_time', 'id')
+        )
+
+        # 过滤条件保持不变
+        if v.get('grades'):
+            qs = qs.filter(class_group__grade__in=v['grades'])
+        if v.get('teachers'):
+            qs = qs.filter(teacher_id__in=v['teachers']) | qs.filter(class_group__teacher_main_id__in=v['teachers'])
+        if v.get('subjects'):
+            qs = qs.filter(class_group__subject_id__in=v['subjects'])
+
+        # —— 批量取当页涉及的班级与课次 ——
+        cg_ids = set(qs.values_list('class_group_id', flat=True))
+        lesson_ids = set(qs.values_list('id', flat=True))
+
+        # —— 一次性取出“全部学生”（在读）：构建 {cg_id: [ {id, name}, ... ]} ——
+        from collections import defaultdict
+        by_cg_students = defaultdict(list)
+        if cg_ids:
+            enroll_rows = (
+                ClassEnrollment.objects
+                .filter(class_group_id__in=cg_ids, left_at__isnull=True)
+                .select_related('student')
+                .values('class_group_id', 'student_id', 'student__name')
+                .order_by('id')
+            )
+            for row in enroll_rows:
+                by_cg_students[row['class_group_id']].append(
+                    {'id': row['student_id'], 'name': row['student__name'] or ''}
+                )
+
+        # —— 批量统计请假数，避免循环 count ——
+        from django.db.models import Count
+        leaves_map = {lid: 0 for lid in lesson_ids}
+        if lesson_ids:
+            for r in (LessonLeave.objects
+                      .filter(lesson_id__in=lesson_ids)
+                      .values('lesson_id')
+                      .annotate(cnt=Count('id'))):
+                leaves_map[r['lesson_id']] = r['cnt']
+
+        # —— 组装返回（新增 roster 完整数组；保留 roster_preview/roster_count/enrolled）——
+        data = []
+        for les in qs:
+            cg = les.class_group
+            teacher = les.teacher or cg.teacher_main
+            room = les.room or cg.room_default
+
+            roster = by_cg_students.get(cg.id, [])               # 全量学生 [{id,name}, ...]
+            roster_count = len(roster)
+            roster_preview = [s['name'] for s in roster][:5]
+            leave_count = leaves_map.get(les.id, 0)
+
+            data.append({
+                'id': les.id,
+                'class_group_id': cg.id,
+                'title': f'{cg.name or ""}{cg.subject.name}-{cg.course_mode}',
+                'date': str(les.date),
+                'start_time': str(les.start_time),
+                'end_time': str(les.end_time),
+                'duration': les.duration_minutes,
+                'grade': cg.grade,
+                'course_mode': cg.course_mode,
+                'subject': cg.subject.name,
+                'room': (room.name if room else None),
+                'teacher': (getattr(teacher, 'name', None) or getattr(teacher, 'username', None)),
+
+                # ✅ 新增：完整学生数组（全量）
+                'roster': roster,                  # [{id, name}, ...]
+
+                # 兼容 & 汇总
+                'roster_preview': roster_preview,  # 预览（前5个名字）
+                'roster_count': roster_count,      # 总人数
+                'enrolled': roster_count,          # 保持前端已用的字段
+                'capacity': cg.capacity,           # small_class 为 null
+                'leave_count': leave_count,
+                'status': les.status,
+            })
+
+        return ok(data)
+
+
 # --------- 班级 ---------
 class ClassGroupListCreate(APIView):
     permission_classes = [IsAuthenticated]
@@ -222,54 +322,6 @@ class ClassGroupUnenroll(APIView):
             .update(left_at=timezone.now())
         return ok({'updated': n}, '移除成功')
 
-
-# --------- 课表（周/日） ---------
-class LessonsView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        s = LessonsQuery(data=request.query_params)
-        s.is_valid(raise_exception=True)
-        v = s.validated_data
-        qs = Lesson.objects.filter(
-            class_group__term_id=v['term_id'],
-            date__gte=v['date_from'], date__lte=v['date_to']
-        ).exclude(status='canceled').select_related('class_group', 'teacher', 'room', 'class_group__subject')
-
-        if v.get('grades'):
-            qs = qs.filter(class_group__grade__in=v['grades'])
-        if v.get('teachers'):
-            qs = qs.filter(teacher_id__in=v['teachers']) | qs.filter(class_group__teacher_main_id__in=v['teachers'])
-        if v.get('subjects'):
-            qs = qs.filter(class_group__subject_id__in=v['subjects'])
-
-        data = []
-        for les in qs.order_by('date', 'start_time'):
-            cg = les.class_group
-            teacher = les.teacher or cg.teacher_main
-            room = les.room or cg.room_default
-            # 当前有效人数
-            enrolled = ClassEnrollment.objects.filter(class_group=cg, left_at__isnull=True).count()
-            leaves = LessonLeave.objects.filter(lesson=les).count()
-            data.append({
-                'id': les.id,
-                'class_group_id': cg.id,
-                'title': f'{cg.name or ""}{cg.subject.name}-{cg.course_mode}',
-                'date': str(les.date),
-                'start_time': str(les.start_time),
-                'end_time': str(les.end_time),
-                'duration': les.duration_minutes,
-                'grade': cg.grade,
-                'course_mode': cg.course_mode,
-                'subject': cg.subject.name,
-                'room': room.name if room else None,
-                'teacher': getattr(teacher, 'name', None) or getattr(teacher, 'username', None),
-                'enrolled': enrolled,
-                'capacity': cg.capacity,  # small_class 为 null
-                'leave_count': leaves,
-                'status': les.status,
-            })
-        return ok(data)
 
 
 # --------- 请假（课前；一键支持 all=true） ---------
@@ -517,3 +569,57 @@ class AttendanceRevertView(APIView):
             les.save(update_fields=['status', 'lock_attendance'])
 
         return ok(message='已撤销消课')
+
+class StudentSearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        q = (request.query_params.get('q') or '').strip()
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+        except Exception:
+            page = 1
+        try:
+            page_size = max(1, min(50, int(request.query_params.get('page_size', 20))))
+        except Exception:
+            page_size = 20
+
+        qs = Student.objects.all().order_by('id')
+        if q:
+            qs = qs.filter(name__icontains=q)
+
+        total = qs.count()
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        # 为了兼容不同模型结构，这里逐条构建字典，避免 values() 硬编码字段名
+        items = []
+        for stu in qs[start:end]:
+            # 学校：兼容 CharField、外键、或 school_name
+            school_val = None
+            if hasattr(stu, 'school'):
+                v = getattr(stu, 'school')
+                school_val = getattr(v, 'name', None) if v is not None else None
+                if school_val is None and isinstance(v, str):
+                    school_val = v
+            elif hasattr(stu, 'school_name'):
+                school_val = getattr(stu, 'school_name')
+
+            # 年级：通常是整数；若模型有 grade_name 也一并返回
+            grade_val = getattr(stu, 'grade', None)
+            grade_name = getattr(stu, 'grade_name', None)
+
+            items.append({
+                'id': stu.id,
+                'name': getattr(stu, 'name', ''),
+                'grade': grade_val,
+                'grade_name': grade_name,   # 没有也会是 None，前端可忽略
+                'school': school_val,
+            })
+
+        return ok({
+            'count': total,
+            'page': page,
+            'page_size': page_size,
+            'results': items,
+        })

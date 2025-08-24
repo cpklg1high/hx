@@ -28,8 +28,7 @@
         <span>课程管理</span>
       </template>
       <el-menu-item index="/courses">课程列表</el-menu-item>
-      <el-menu-item index="/schedule">可视化排课</el-menu-item>
-      <el-menu-item index="/schedule-grid">排课（Grid）</el-menu-item>
+      <el-menu-item index="/schedule">排课</el-menu-item>
 
     </el-sub-menu>
 

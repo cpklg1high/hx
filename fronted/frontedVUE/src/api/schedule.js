@@ -35,3 +35,20 @@ export const revokeLeave = (lessonId, data) => request.delete(API(`/schedule/les
 export const getAttendance    = (lessonId) => request.get(API(`/schedule/lessons/${lessonId}/attendance`))
 export const commitAttendance = (lessonId, data) => request.post(API(`/schedule/lessons/${lessonId}/attendance`), data)
 export const revertAttendance = (lessonId) => request.post(API(`/schedule/lessons/${lessonId}/attendance/revert`))
+
+
+// ---- 排课中增删学生 ----
+export function enrollStudentsToClassGroup(classGroupId, studentIds) {
+  return request.post(`/api/schedule/class-groups/${classGroupId}/enroll`, {
+    student_ids: studentIds,
+  })
+}
+
+export function unenrollStudentsFromClassGroup(classGroupId, studentIds) {
+  return request.post(`/api/schedule/class-groups/${classGroupId}/unenroll`, {
+    student_ids: studentIds,
+  })
+}
+
+export const searchStudents = ({ q = '', page = 1, page_size = 20 } = {}) =>
+  request.get('/students', { params: { q, page, page_size } })

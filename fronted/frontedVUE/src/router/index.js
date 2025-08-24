@@ -19,7 +19,6 @@ import TeacherHourStats from '../views/teachers/TeacherHourStats.vue'
 import Campus from '../views/campus/Campus.vue'
 import CampusCalendar from '../views/campus/CampusCalendar.vue'
 
-import GridScheduleBoard from '../views/schedule-grid/GridScheduleBoard.vue'  // ← 注意：router 位于 src/router，下到 src 只需 "../"
 
 const routes = [
   { path: '/login', name: 'login', component: Login, meta: { public: true } },
@@ -43,7 +42,6 @@ const routes = [
       { path: 'campus', name: 'campus', component: Campus, meta: { title: '校区/教室' } },
       { path: 'campus/calendar', name: 'campus-calendar', component: CampusCalendar, meta: { title: '学期/假期设置' } },
 
-      { path: 'schedule-grid', name: 'schedule-grid', component: GridScheduleBoard, meta: { title: '排课（Grid）' } },
     ],
   },
 ]
