@@ -9,7 +9,8 @@ from django.contrib.auth import get_user_model
 
 from .models import (
     Term, Room, Subject, ClassGroup, ScheduleRule, ScheduleCustomEntry,
-    Lesson, ClassEnrollment, LessonLeave, Attendance, TeacherWorklog
+    Lesson, ClassEnrollment, LessonLeave, Attendance, TeacherWorklog,
+    LessonParticipant
 )
 from .utils import days_to_mask, mask_to_days, find_teacher_or_room_conflicts, get_student_deduct, \
     capacity_default, capacity_max, check_balance_sufficient, apply_deduction, revert_deduction, dt_combine
@@ -227,3 +228,18 @@ class AttendanceOut(serializers.ModelSerializer):
     class Meta:
         model = Attendance
         fields = ['id','student','student_name','status','deduct_unit','deduct_qty','deduct_from','paid_used','gift_used','confirmed_at','created_at']
+
+class LessonParticipantSerializer(serializers.ModelSerializer):
+    # 展示用字段（防止前端重复查学生详情）
+    student_name = serializers.CharField(source='student.name', read_only=True)
+    grade_id = serializers.IntegerField(source='student.grade_id', read_only=True)
+    grade_name = serializers.CharField(source='student.grade_name', read_only=True, default=None)
+    school = serializers.CharField(source='student.school', read_only=True, default=None)
+
+    class Meta:
+        model = LessonParticipant
+        fields = (
+            'id', 'lesson', 'student', 'type', 'created_at',
+            'student_name', 'grade_id', 'grade_name', 'school'
+        )
+        read_only_fields = ('id', 'created_at')

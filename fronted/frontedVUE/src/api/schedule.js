@@ -39,16 +39,17 @@ export const revertAttendance = (lessonId) => request.post(API(`/schedule/lesson
 
 // ---- 排课中增删学生 ----
 export function enrollStudentsToClassGroup(classGroupId, studentIds) {
-  return request.post(`/api/schedule/class-groups/${classGroupId}/enroll`, {
+  return request.post(`/schedule/class-groups/${classGroupId}/enroll`, {
     student_ids: studentIds,
   })
 }
 
 export function unenrollStudentsFromClassGroup(classGroupId, studentIds) {
-  return request.post(`/api/schedule/class-groups/${classGroupId}/unenroll`, {
+  return request.post(`/schedule/class-groups/${classGroupId}/unenroll`, {
     student_ids: studentIds,
   })
 }
 
-export const searchStudents = ({ q = '', page = 1, page_size = 20 } = {}) =>
-  request.get('/students', { params: { q, page, page_size } })
+export function searchStudents(q, page = 1, page_size = 20) {
+  return request.get('/students', { params: { q, page, page_size } })
+}

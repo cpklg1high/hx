@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from students.models import Student, GRADE_CHOICES  # 年级枚举与学生
 from academics.models import Enrollment  # 后续签到扣课会用到（本步仅建表）
+from django.conf import settings
 
 User = get_user_model()
 
@@ -279,3 +280,38 @@ class TeacherWorklog(models.Model):
         db_table = 'edu_teacher_worklog'
         ordering = ['-id']
         indexes = [models.Index(fields=['teacher', 'status'])]
+
+class LessonParticipant(models.Model):
+    TYPE_TRIAL = 'trial'   # 试听（不扣课）
+    TYPE_TEMP = 'temp'     # 临时排课一次（按正常扣课）
+    TYPE_CHOICES = (
+        (TYPE_TRIAL, 'Trial'),
+        (TYPE_TEMP, 'Temporary'),
+    )
+
+    lesson = models.ForeignKey(
+        'schedule.Lesson',  # 与 Lesson 同 app
+        on_delete=models.CASCADE,
+        related_name='participants'
+    )
+    student = models.ForeignKey(
+        'students.Student',  # 如你的学生 app 标签不同，这里改成实际的 "<app_label>.<Model>"
+        on_delete=models.CASCADE,
+        related_name='lesson_participations'
+    )
+    type = models.CharField(max_length=10, choices=TYPE_CHOICES)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='+'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('lesson', 'student')
+        indexes = [
+            models.Index(fields=['lesson', 'student']),
+            models.Index(fields=['type']),
+        ]
+
+    def __str__(self):
+        return f'{self.lesson_id}-{self.student_id}-{self.type}'

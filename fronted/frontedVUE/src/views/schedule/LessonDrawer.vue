@@ -31,7 +31,6 @@
         </el-popconfirm>
 
         <div class="flex-1" />
-        <!-- 新增：添加学生 -->
         <el-button type="primary" plain @click="openAddDlg">添加学生</el-button>
       </div>
 
@@ -52,7 +51,6 @@
             </el-select>
           </template>
         </el-table-column>
-        <!-- 新增：移除 -->
         <el-table-column label="操作" width="90" align="center">
           <template #default="{ row }">
             <el-popconfirm title="确认将该学生移出本班？" @confirm="removeOne(row.student_id)">
@@ -68,7 +66,7 @@
         <el-button type="primary" @click="submit" :disabled="!canSign" :loading="loading">提交签到</el-button>
       </div>
 
-      <!-- 新增：添加学生弹窗（远程搜索：学校｜年级｜姓名） -->
+      <!-- 添加学生弹窗（远程搜索：仅按姓名；1个字即搜） -->
       <el-dialog v-model="dlgAdd" title="添加学生" width="520px" destroy-on-close>
         <el-form label-width="80px">
           <el-form-item label="搜索">
@@ -76,12 +74,13 @@
               v-model="addIds"
               multiple
               filterable
-              clearable
               remote
-              reserve-keyword
+              clearable
               :remote-method="remoteSearch"
               :loading="searchLoading"
-              placeholder="输入姓名/学校关键字搜索"
+              :remote-show-suffix="true"
+              :fit-input-width="true"
+              placeholder="输入姓名关键字（支持1个字）"
               style="width: 100%;"
             >
               <el-option
@@ -125,18 +124,58 @@ const visible = computed({
   set:(v)=>emits('update:modelValue', v)
 })
 
-const rows = ref([])               // 抽屉内“本课次名单”
+const rows = ref([])
 const loading = ref(false)
 
-// 新增：添加/搜索/移除 相关状态
+/** ===== 添加/搜索/移除 相关状态（注意：options 只声明一次） ===== */
 const dlgAdd = ref(false)
 const addIds = ref([])
-const options = ref([])            // 远程搜索候选项 [{id,name,grade,grade_name,school}]
+const options = ref([])            // [{id,name,grade,grade_name,school}]
 const searchLoading = ref(false)
 const adding = ref(false)
 const removingId = ref(null)
 const gradeMap = ref({})           // 年级 id->name
 
+/** ===== 远程搜索（立即触发，支持1个字；只按“姓名”匹配） ===== */
+let querySeq = 0 // 竞态保护序号
+async function remoteSearch(query) {
+  const q = (query ?? '').trim()
+  const mySeq = ++querySeq
+
+  if (!q) {
+    options.value = []
+    return
+  }
+
+  searchLoading.value = true
+  try {
+    // 确保 API 把查询放在 params：/students?q=...
+    const { data } = await searchStudents({ q, page: 1, page_size: 20 })
+
+    // 兼容常见返回结构
+    const list = data?.data?.results || data?.results || data?.data || []
+
+    // 只保留“姓名包含关键字”的记录
+    const filteredByName = list.filter(i => String(i.name || '').includes(q))
+
+    const mapped = filteredByName.map(i => ({
+      id: i.id,
+      name: i.name,
+      grade: i.grade ?? i.grade_id ?? null,
+      grade_name: i.grade_name ?? i.grade__name ?? null,
+      school: i.school ?? i.school_name ?? null,
+    }))
+
+    if (mySeq === querySeq) options.value = mapped
+  } catch (err) {
+    if (mySeq === querySeq) options.value = []
+    ElMessage.error(err?.response?.data?.message || err?.message || '学生搜索失败')
+  } finally {
+    if (mySeq === querySeq) searchLoading.value = false
+  }
+}
+
+/** ===== 生命周期 / 字典 ===== */
 onMounted(async ()=>{
   try {
     const { data } = await getGrades()
@@ -149,6 +188,7 @@ onMounted(async ()=>{
   }
 })
 
+/** ===== 课前/课后控制 ===== */
 const canLeave = computed(()=>{
   if (!props.lesson) return false
   const start = dayjs(`${props.lesson.date}T${props.lesson.start_time}`)
@@ -163,13 +203,13 @@ const canRevert = computed(()=> props.lesson && props.lesson.status === 'finishe
 
 watch(()=>props.lesson, (v)=>{ if (v) loadAttendance() })
 
+/** ===== 名单加载/提交/撤销 ===== */
 async function loadAttendance(){
   if (!props.lesson) return
   loading.value = true
   try{
     const { data } = await getAttendance(props.lesson.id)
     const list = data.data?.students || []
-    // rows 字段：student_id / student_name / preleave / status
     rows.value = list.map(i => ({ ...i, status: i.status || (i.preleave ? 'leave' : 'absent') }))
   }catch(err){
     ElMessage.error(err?.response?.data?.message || '加载失败')
@@ -231,46 +271,17 @@ async function doRevert(){
   }finally{ loading.value = false }
 }
 
-/** ===== 新增：学生添加/移除 ===== */
+/** ===== 学生添加/移除 ===== */
 function openAddDlg(){
   addIds.value = []
   options.value = []
   dlgAdd.value = true
 }
 
-async function remoteSearch(query){
-  if(!query) { options.value = []; return }
-  searchLoading.value = true
-  try{
-    console.log('[remoteSearch] query =', query)
-    const { data } = await searchStudents({ q: query, page: 1, page_size: 20 })
-    console.log('[remoteSearch] response =', data)
-
-    // 兼容多种返回结构：{code, data:{results:[]}} / {results:[]} / {data:[]}
-    const list = data?.data?.results || data?.results || data?.data || []
-    options.value = list.map(i => ({
-      id: i.id,
-      name: i.name,
-      grade: i.grade ?? null,
-      grade_name: i.grade_name ?? null,
-      school: i.school ?? null,
-    }))
-    console.log('[remoteSearch] mapped options =', options.value)
-  } catch (err) {
-    console.error('[remoteSearch] error =', err)
-    const msg = err?.response?.data?.message || err?.message || '学生搜索失败'
-    ElMessage.error(msg)
-  } finally {
-    searchLoading.value = false
-  }
-}
-
-
 async function confirmAdd(){
   if(!props.lesson?.class_group_id) return ElMessage.warning('缺少 class_group_id')
   if(!addIds.value.length)          return ElMessage.warning('请选择学生')
 
-  // 二次确认文案：单人展示“学校｜年级｜姓名”，多人展示“首位 + 等X人”
   const selected = options.value.filter(o => addIds.value.includes(o.id))
   const fmt = (o)=> `${o.school || '未知学校'}｜${o.grade_name || gradeMap.value[o.grade] || (o.grade ?? '未知年级')}｜${o.name}`
   const msg = (selected.length === 1)

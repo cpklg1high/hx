@@ -7,16 +7,20 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Count
 from django.utils import timezone
+from rest_framework import viewsets, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from .models import (
-    Term, Room, Subject, ClassGroup, Lesson, ClassEnrollment, LessonLeave, Attendance, TeacherWorklog
+    Term, Room, Subject, ClassGroup, Lesson,
+    ClassEnrollment, LessonLeave, Attendance,
+    TeacherWorklog,LessonParticipant
 )
 from .serializers import (
     TermIn, TermOut, ClassGroupCreateIn, ClassGroupOut,
-    EnrollIn, UnenrollIn, LessonsQuery, LeaveIn, AttendanceCommitIn, AttendanceOut
+    EnrollIn, UnenrollIn, LessonsQuery, LeaveIn, AttendanceCommitIn,
+    AttendanceOut,LessonParticipantSerializer
 )
 from .utils import (
     get_student_deduct, find_teacher_or_room_conflicts, student_has_conflict,
@@ -623,3 +627,50 @@ class StudentSearchView(APIView):
             'page_size': page_size,
             'results': items,
         })
+
+class LessonParticipantViewSet(viewsets.ModelViewSet):
+    """
+    路由：
+      GET    /api/schedule/lessons/{lesson_id}/participants
+      POST   /api/schedule/lessons/{lesson_id}/participants   body: {"type":"trial|temp","students":[1,2,...]}
+      DELETE /api/schedule/lessons/{lesson_id}/participants/{id}
+    """
+    serializer_class = LessonParticipantSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete']
+
+    def get_queryset(self):
+        lesson_id = self.kwargs['lesson_id']
+        return LessonParticipant.objects.select_related('student').filter(lesson_id=lesson_id).order_by('id')
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        lesson_id = self.kwargs['lesson_id']
+        ptype = request.data.get('type')
+        students = request.data.get('students', [])
+
+        if ptype not in (LessonParticipant.TYPE_TRIAL, LessonParticipant.TYPE_TEMP):
+            return Response({'code': 400, 'message': 'type 必须是 trial 或 temp', 'data': None},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if not students or not isinstance(students, list):
+            return Response({'code': 400, 'message': 'students 必须为非空数组', 'data': None},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        created = []
+        # TODO: 临时排课余额校验：此处可接入你现有余额服务；当前先放行，保证可运行
+        for sid in students:
+            obj, _ = LessonParticipant.objects.get_or_create(
+                lesson_id=lesson_id, student_id=sid,
+                defaults={'type': ptype, 'created_by_id': request.user.id}
+            )
+            # 如果已存在且类型不同，可按需更新；这里保持幂等，不写覆盖，避免误改
+            created.append(obj)
+
+        serializer = self.get_serializer(created, many=True)
+        return Response({'code': 0, 'message': 'ok', 'data': serializer.data},
+                        status=status.HTTP_201_CREATED)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response({'code': 0, 'message': 'deleted', 'data': None}, status=status.HTTP_200_OK)
