@@ -19,6 +19,8 @@ import TeacherHourStats from '../views/teachers/TeacherHourStats.vue'
 import Campus from '../views/campus/Campus.vue'
 import CampusCalendar from '../views/campus/CampusCalendar.vue'
 
+const CycleSchedulePage = () => import('../views/cycle-schedule/CycleSchedulePage.vue')
+
 
 const routes = [
   { path: '/login', name: 'login', component: Login, meta: { public: true } },
@@ -42,6 +44,24 @@ const routes = [
       { path: 'campus', name: 'campus', component: Campus, meta: { title: '校区/教室' } },
       { path: 'campus/calendar', name: 'campus-calendar', component: CampusCalendar, meta: { title: '学期/假期设置' } },
 
+      {
+        path: '/cycle-schedule',
+        name: 'CycleSchedule',
+        component: CycleSchedulePage,
+        meta: { title: '周期排课（销售看板）' }
+      },
+      {
+        path: '/preplan',
+        name: 'PreplanBoard',
+        component: () => import('../views/cycle-preplan/PreplanBoard.vue'),
+        meta: { requiresAuth: true, title: '预排缓冲池' }
+      },
+      {
+        path: '/preplan',
+        name: 'PreplanBoard',
+        component: () => import('../views/preplan/PreplanBoard.vue'),
+        meta: { auth: true, title: '预排模板（缓冲池）' }
+      }
     ],
   },
 ]

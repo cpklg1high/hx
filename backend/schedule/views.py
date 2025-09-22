@@ -674,3 +674,5 @@ class LessonParticipantViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         self.perform_destroy(instance)
         return Response({'code': 0, 'message': 'deleted', 'data': None}, status=status.HTTP_200_OK)
+
+

@@ -1,18 +1,64 @@
+# backend/schedule/models.py
 from decimal import Decimal
+import json
+
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from students.models import Student, GRADE_CHOICES  # 年级枚举与学生
-from academics.models import Enrollment  # 后续签到扣课会用到（本步仅建表）
 from django.conf import settings
+
+from students.models import Student, GRADE_CHOICES  # 年级枚举与学生
+# 避免潜在循环导入，如需使用 Enrollment，请在使用处延迟导入
+# from academics.models import Enrollment
 
 User = get_user_model()
 
-# 班型（与 billing/academics 保持一致）
+# ================== SQLite 兼容：JSONTextField ==================
+class JSONTextField(models.TextField):
+    """
+    在 SQLite 上用 TextField 存 JSON 字符串：
+    - 读取自动 json.loads -> dict/list
+    - 写入可直接给 dict/list，自动 json.dumps
+    - 允许 None/'' -> {}
+    """
+    def from_db_value(self, value, expression, connection):
+        if value in (None, ''):
+            return {}
+        if isinstance(value, (dict, list)):
+            return value
+        try:
+            return json.loads(value)
+        except Exception:
+            return {}
+
+    def to_python(self, value):
+        if value in (None, ''):
+            return {}
+        if isinstance(value, (dict, list)):
+            return value
+        try:
+            return json.loads(value)
+        except Exception:
+            return {}
+
+    def get_prep_value(self, value):
+        if value in (None, ''):
+            return '{}'
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+        # 已是字符串，尽力校验
+        try:
+            json.loads(value)
+            return value
+        except Exception:
+            return json.dumps(str(value), ensure_ascii=False)
+
+
+# ================== 基础枚举 ==================
 COURSE_MODE = (
     ('one_to_one', '一对一'),
-    ('one_to_two', '一对二'),  # 实际容量 <= 4（默认2）
-    ('small_class', '小班'),   # 无上限
+    ('one_to_two', '一对二'),  # 实际容量 <= 4（默认2），1v2/1v3/1v4 用 capacity 表达
+    ('small_class', '小班'),   # 无上限（capacity 可空）
 )
 
 DEDUCT_UNIT = (
@@ -50,6 +96,21 @@ PHASE = (  # 科目学段：primary=小学，junior=初中，senior=高中
     ('senior', '高中'),
 )
 
+# ================== 新增：校区 ==================
+class Campus(models.Model):
+    """校区（Room 归属到 Campus；周期、课表按校区过滤）"""
+    name = models.CharField(max_length=50, unique=True)
+    code = models.CharField(max_length=20, blank=True, default='')
+    address = models.CharField(max_length=200, blank=True, default='')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'edu_campus'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
 
 class Term(models.Model):
     """学期/季度：限制排课时间边界"""
@@ -75,6 +136,10 @@ class Room(models.Model):
     name = models.CharField(max_length=50, unique=True)
     capacity = models.PositiveSmallIntegerField(null=True, blank=True)  # None 代表不限制
     location = models.CharField(max_length=100, blank=True, default='')
+
+    # 归属校区（兼容历史，可空；迁移后请补齐）
+    campus = models.ForeignKey(Campus, on_delete=models.PROTECT, related_name='rooms', null=True, blank=True)
+
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -213,7 +278,7 @@ class ClassEnrollment(models.Model):
         db_table = 'edu_class_enrollment'
         ordering = ['-id']
         constraints = [
-            # 同一学生在同一班级同一时间仅允许一个“有效”（left_at is null）的关系
+            # 注意：SQLite 对“带 condition 的唯一约束”不强制，但 Django 保持声明以利于未来迁移到 PG/MySQL
             models.UniqueConstraint(
                 fields=['student', 'class_group'],
                 condition=models.Q(left_at__isnull=True),
@@ -281,29 +346,24 @@ class TeacherWorklog(models.Model):
         ordering = ['-id']
         indexes = [models.Index(fields=['teacher', 'status'])]
 
+
 class LessonParticipant(models.Model):
+    """
+    课次临时/试听参与者：
+      - trial 试听（不扣课）
+      - temp  正常排课（周期发布或“临时一次”均可用此类型）
+    """
     TYPE_TRIAL = 'trial'   # 试听（不扣课）
-    TYPE_TEMP = 'temp'     # 临时排课一次（按正常扣课）
+    TYPE_TEMP = 'temp'     # 正常排课或临时一次（按正常扣课）
     TYPE_CHOICES = (
         (TYPE_TRIAL, 'Trial'),
         (TYPE_TEMP, 'Temporary'),
     )
 
-    lesson = models.ForeignKey(
-        'schedule.Lesson',  # 与 Lesson 同 app
-        on_delete=models.CASCADE,
-        related_name='participants'
-    )
-    student = models.ForeignKey(
-        'students.Student',  # 如你的学生 app 标签不同，这里改成实际的 "<app_label>.<Model>"
-        on_delete=models.CASCADE,
-        related_name='lesson_participations'
-    )
+    lesson = models.ForeignKey('schedule.Lesson', on_delete=models.CASCADE, related_name='participants')
+    student = models.ForeignKey('students.Student', on_delete=models.CASCADE, related_name='lesson_participations')
     type = models.CharField(max_length=10, choices=TYPE_CHOICES)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, null=True, blank=True,
-        on_delete=models.SET_NULL, related_name='+'
-    )
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -315,3 +375,149 @@ class LessonParticipant(models.Model):
 
     def __str__(self):
         return f'{self.lesson_id}-{self.student_id}-{self.type}'
+
+
+# ================== 新增：排课周期层（与既有逻辑解耦） ==================
+class Cycle(models.Model):
+    """排课周期（销售用：一周期=一周；发布时做日期映射）"""
+    PATTERN_WEEKLY = 'weekly'        # 春/秋：按周
+    PATTERN_AB_FIXED6 = 'ab_fixed6'  # 暑：上六休一（默认周日休息）
+    PATTERN_AB_CUSTOM = 'ab_custom'  # 冬：AB 不规则
+    PATTERN_CHOICES = (
+        (PATTERN_WEEKLY, 'weekly'),
+        (PATTERN_AB_FIXED6, 'ab_fixed6'),
+        (PATTERN_AB_CUSTOM, 'ab_custom'),
+    )
+
+    term = models.ForeignKey(Term, on_delete=models.PROTECT, related_name='cycles')
+    term_type = models.CharField(max_length=10, choices=TERM_TYPE, db_index=True)
+    year = models.PositiveSmallIntegerField(db_index=True)
+    campus = models.ForeignKey('schedule.Campus', on_delete=models.PROTECT, related_name='cycles')
+
+    name = models.CharField(max_length=80)
+    date_from = models.DateField()
+    date_to = models.DateField()
+    pattern = models.CharField(max_length=20, choices=PATTERN_CHOICES, default=PATTERN_WEEKLY)
+    rest_weekday = models.PositiveSmallIntegerField(default=7)  # 1~7(周一~周日)，暑假默认 7(周日休息)
+
+    status = models.CharField(max_length=12, default='draft')   # draft/published/closed
+    remark = models.CharField(max_length=200, blank=True, default='')
+
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'edu_cycle'
+        ordering = ['-year', '-date_from']
+        indexes = [models.Index(fields=['year', 'term_type', 'campus'])]
+
+    def __str__(self):
+        return f'Cycle<{self.id}> {self.name}'
+
+
+class CycleRoster(models.Model):
+    """周期名册（计划层，发布前不影响签到）"""
+    TYPE_NORMAL = 'normal'
+    TYPE_TRIAL = 'trial'
+    TYPE_CHOICES = (
+        (TYPE_NORMAL, 'normal'),
+        (TYPE_TRIAL, 'trial'),
+    )
+
+    TRACK_CHOICES = (('A', 'A'), ('B', 'B'))
+
+    cycle = models.ForeignKey(Cycle, on_delete=models.CASCADE, related_name='rosters')
+    class_group = models.ForeignKey(ClassGroup, on_delete=models.PROTECT, related_name='cycle_rosters')
+    student = models.ForeignKey(Student, on_delete=models.PROTECT, related_name='cycle_rosters')
+    type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_NORMAL)
+    track = models.CharField(max_length=1, choices=TRACK_CHOICES, null=True, blank=True)
+
+    note = models.CharField(max_length=200, blank=True, default='')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'edu_cycle_roster'
+        unique_together = ('cycle', 'class_group', 'student', 'track')
+        indexes = [
+            models.Index(fields=['cycle', 'class_group']),
+            models.Index(fields=['student']),
+        ]
+
+
+class CyclePublishLog(models.Model):
+    """发布日志（记录映射与差异，便于审计/回滚）"""
+    SCOPE_FUTURE = 'future_only'
+    SCOPE_INCLUDE_TODAY = 'include_today'
+    MODE_PARTICIPANTS = 'participants'
+    MODE_SEGMENT_ENROLL = 'segment_enroll'  # 备用，不在本期启用
+
+    cycle = models.ForeignKey(Cycle, on_delete=models.CASCADE, related_name='publish_logs')
+    scope = models.CharField(max_length=20, default=SCOPE_FUTURE)
+    mode = models.CharField(max_length=20, default=MODE_PARTICIPANTS)
+    payload = JSONTextField(default=dict)     # SQLite 兼容：存 JSON 文本，读写自动 dict
+    diff_stats = JSONTextField(default=dict)  # 同上
+    published_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='+')
+    published_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'edu_cycle_publish_log'
+        ordering = ['-id']
+
+
+class CyclePublishItem(models.Model):
+    """追踪“本周期发布”创建的明细（仅删除本周期所生，避免误删手工或其它周期）"""
+    cycle = models.ForeignKey(Cycle, on_delete=models.CASCADE, related_name='publish_items')
+    roster = models.ForeignKey(CycleRoster, on_delete=models.CASCADE, related_name='publish_items')
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name='cycle_publish_items')
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='cycle_publish_items')
+    participant = models.ForeignKey('schedule.LessonParticipant', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    type = models.CharField(max_length=10, choices=CycleRoster.TYPE_CHOICES)   # normal/trial
+    track = models.CharField(max_length=1, null=True, blank=True)              # A/B
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'edu_cycle_publish_item'
+        unique_together = ('cycle', 'lesson', 'student')
+        indexes = [
+            models.Index(fields=['cycle', 'lesson']),
+            models.Index(fields=['student']),
+        ]
+
+class CyclePreplanSlot(models.Model):
+    """
+    预排槽位：把某个班级放到【周几 × 时间段】的“缓冲池”里。
+    —— 只存计划，不生成 Lesson；发布时再映射到具体自然日。
+    """
+    cycle = models.ForeignKey('schedule.Cycle', on_delete=models.CASCADE, related_name='preplan_slots')
+    class_group = models.ForeignKey('schedule.ClassGroup', on_delete=models.PROTECT, related_name='preplan_slots')
+
+    # 1~7（周一~周日），与前端看板一致；默认周日休息
+    weekday = models.PositiveSmallIntegerField()
+
+    # 允许自定义时间（满足你“可改时间”的要求）；发布匹配 Lesson 用它
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+
+    # 可选：预排阶段覆盖老师/教室（不改动班级默认；发布时仅用于冲突提示或后续扩展）
+    teacher_override = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    room_override = models.ForeignKey('schedule.Room', on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+
+    note = models.CharField(max_length=200, blank=True, default='')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='+')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'edu_cycle_preplan_slot'
+        ordering = ['cycle_id','weekday','start_time','id']
+        indexes = [
+            models.Index(fields=['cycle', 'weekday']),
+            models.Index(fields=['class_group']),
+        ]
+        # 同一张预排表里，不允许同一个班在同一周几同一时间段重复摆放
+        unique_together = ('cycle', 'class_group', 'weekday', 'start_time', 'end_time')
+
+    def __str__(self):
+        return f'Preplan<{self.id}> cyc={self.cycle_id} cg={self.class_group_id} w{self.weekday} {self.start_time}-{self.end_time}'

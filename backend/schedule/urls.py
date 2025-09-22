@@ -4,7 +4,17 @@ from .views import (
     ClassGroupListCreate, ClassGroupEnroll, ClassGroupUnenroll,
     LessonsView, LessonLeaveView, AttendanceCommitView, AttendanceRevertView,
     # 新增导入
-    LessonParticipantViewSet,
+    LessonParticipantViewSet
+)
+
+from .views_cycle import (
+    CampusListView,
+    CycleListCreateView, CycleDetailView,
+    CycleBoardView,
+    CycleRosterView,
+    CyclePublishView,
+    CycleMasterRosterView,PreplanSlotListCreateView,
+    PreplanSlotDetailView
 )
 
 # 新增：把 ViewSet 映射为函数视图（保持与你其它 re_path 风格一致）
@@ -38,4 +48,16 @@ urlpatterns = [
     re_path(r'^lessons/(?P<lesson_id>\d+)/participants/?$', participant_list, name='lessonparticipant-list'),
     # 删除单个参与者
     re_path(r'^lessons/(?P<lesson_id>\d+)/participants/(?P<pk>\d+)/?$', participant_detail, name='lessonparticipant-detail'),
+
+    re_path(r'^cycle-schedule/campuses/?$', CampusListView.as_view()),
+    re_path(r'^cycle-schedule/cycles/?$', CycleListCreateView.as_view()),
+    re_path(r'^cycle-schedule/cycles/(?P<pk>\d+)/?$', CycleDetailView.as_view()),
+    re_path(r'^cycle-schedule/cycles/(?P<pk>\d+)/board/?$', CycleBoardView.as_view()),
+    re_path(r'^cycle-schedule/cycles/(?P<cycle_id>\d+)/class-groups/(?P<class_group_id>\d+)/roster/?$',
+            CycleRosterView.as_view()),
+    re_path(r'^cycle-schedule/cycles/(?P<pk>\d+)/publish/?$', CyclePublishView.as_view()),
+    re_path(r'^cycle-schedule/cycles/(?P<cycle_id>\d+)/roster/?$', CycleMasterRosterView.as_view()),
+    re_path(r'^cycle-schedule/preplan/slots/?$', PreplanSlotListCreateView.as_view()),
+    re_path(r'^cycle-schedule/preplan/slots/(?P<pk>\d+)/?$', PreplanSlotDetailView.as_view()),
+
 ]
